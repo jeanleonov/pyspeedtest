@@ -100,7 +100,7 @@ class SpeedTest(object):
             response = connection.getresponse()
             self_thread.downloaded = len(response.read())
         except Exception as err:
-            self_thread.err = err
+            self_thread.err = err.__class__, str(err)
 
     def download(self):
         total_downloaded = 0
@@ -121,8 +121,8 @@ class SpeedTest(object):
             for thread in threads:
                 thread.join()
                 if thread.err:
-                    raise thread.err.__class__(
-                        'Error in thread: {}'.format(thread.err)
+                    raise thread.err[0](
+                        'Error in thread: {}'.format(thread.err[1])
                     )
                 total_downloaded += thread.downloaded
                 LOG.debug('Run %d for %s finished',
@@ -148,7 +148,7 @@ class SpeedTest(object):
             reply = response.read().decode('utf-8')
             self_thread.uploaded = int(reply.split('=')[1])
         except Exception as err:
-            self_thread.err = err
+            self_thread.err = err.__class__, str(err)
 
     def upload(self):
         connections = [
@@ -172,8 +172,8 @@ class SpeedTest(object):
             for thread in threads:
                 thread.join()
                 if thread.err:
-                    raise thread.err.__class__(
-                        'Error in thread: {}'.format(thread.err)
+                    raise thread.err[0](
+                        'Error in thread: {}'.format(thread.err[1])
                     )
                 LOG.debug('Run %d for %d bytes finished',
                           thread.run_number, thread.uploaded)
