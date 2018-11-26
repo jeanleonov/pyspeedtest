@@ -9,6 +9,8 @@ import itertools
 import logging
 import random
 import re
+import socket
+import ssl
 import string
 import sys
 import platform
@@ -18,9 +20,9 @@ from threading import currentThread, Thread
 from time import time
 
 try:
-    from httplib import HTTPConnection
+    from httplib import HTTPConnection, HTTPSConnection
 except ImportError:
-    from http.client import HTTPConnection
+    from http.client import HTTPConnection, HTTPSConnection
 
 try:
     from urllib import urlencode
@@ -28,7 +30,7 @@ except ImportError:
     from urllib.parse import urlencode
 
 __program__ = 'pyspeedtest'
-__version__ = '1.2.7'
+__version__ = '1.2.8'
 __description__ = 'Test your bandwidth speed using Speedtest.net servers.'
 
 __supported_formats__ = ('default', 'json', 'xml')
@@ -56,10 +58,12 @@ class SpeedTest(object):
 
     ALPHABET = string.digits + string.ascii_letters
 
-    def __init__(self, host=None, http_debug=0, runs=2):
+    def __init__(self, host=None, http_debug=0, runs=2,
+                 connection_timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
         self._host = host
         self.http_debug = http_debug
         self.runs = runs
+        self.connection_timeout = connection_timeout
 
     @property
     def host(self):
@@ -72,24 +76,34 @@ class SpeedTest(object):
         self._host = new_host
 
     def connect(self, url):
-        try:
-            connection = HTTPConnection(url)
-            connection.set_debuglevel(self.http_debug)
-            connection.connect()
-            return connection
-        except:
-            raise Exception('Unable to connect to %r' % url)
+        if url.startswith('https'):
+            connection = HTTPSConnection(
+                url, timeout=self.connection_timeout,
+                context=ssl._create_unverified_context()
+            )
+        else:
+            connection = HTTPConnection(
+                url, timeout=self.connection_timeout
+            )
+        connection.set_debuglevel(self.http_debug)
+        connection.connect()
+        return connection
 
     def downloadthread(self, connection, url):
-        connection.request('GET', url, None, {'Connection': 'Keep-Alive'})
-        response = connection.getresponse()
         self_thread = currentThread()
-        self_thread.downloaded = len(response.read())
+        self_thread.downloaded = 0
+        self_thread.err = None
+        try:
+            connection.request('GET', url, None, {'Connection': 'Keep-Alive'})
+            response = connection.getresponse()
+            self_thread.downloaded = len(response.read())
+        except Exception as err:
+            self_thread.err = err
 
     def download(self):
         total_downloaded = 0
         connections = [
-            self.connect(self.host) for i in range(self.runs)
+            self.connect(self.host) for _ in range(self.runs)
         ]
         total_start_time = time()
         for current_file in SpeedTest.DOWNLOAD_FILES:
@@ -104,6 +118,10 @@ class SpeedTest(object):
                 threads.append(thread)
             for thread in threads:
                 thread.join()
+                if thread.err:
+                    raise thread.err.__class__(
+                        'Error in thread: {}'.format(thread.err)
+                    )
                 total_downloaded += thread.downloaded
                 LOG.debug('Run %d for %s finished',
                           thread.run_number, current_file)
@@ -115,19 +133,24 @@ class SpeedTest(object):
         return total_downloaded * 8000 / total_ms
 
     def uploadthread(self, connection, data):
-        url = '/speedtest/upload.php?x=%d' % randint()
-        connection.request('POST', url, data, {
-            'Connection': 'Keep-Alive',
-            'Content-Type': 'application/x-www-form-urlencoded'
-        })
-        response = connection.getresponse()
-        reply = response.read().decode('utf-8')
         self_thread = currentThread()
-        self_thread.uploaded = int(reply.split('=')[1])
+        self_thread.downloaded = 0
+        self_thread.err = None
+        try:
+            url = '/speedtest/upload.php?x=%d' % randint()
+            connection.request('POST', url, data, {
+                'Connection': 'Keep-Alive',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            })
+            response = connection.getresponse()
+            reply = response.read().decode('utf-8')
+            self_thread.uploaded = int(reply.split('=')[1])
+        except Exception as err:
+            self_thread.err = err
 
     def upload(self):
         connections = [
-            self.connect(self.host) for i in range(self.runs)
+            self.connect(self.host) for _ in range(self.runs)
         ]
 
         post_data = [
@@ -146,6 +169,10 @@ class SpeedTest(object):
                 threads.append(thread)
             for thread in threads:
                 thread.join()
+                if thread.err:
+                    raise thread.err.__class__(
+                        'Error in thread: {}'.format(thread.err)
+                    )
                 LOG.debug('Run %d for %d bytes finished',
                           thread.run_number, thread.uploaded)
                 total_uploaded += thread.uploaded
