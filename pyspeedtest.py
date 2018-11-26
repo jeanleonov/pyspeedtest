@@ -76,7 +76,9 @@ class SpeedTest(object):
         self._host = new_host
 
     def connect(self, url):
-        if url.startswith('https'):
+        secure = url.startswith('https')
+        url = url.split('://', 1)[-1]
+        if secure:
             connection = HTTPSConnection(
                 url, timeout=self.connection_timeout,
                 context=ssl._create_unverified_context()
