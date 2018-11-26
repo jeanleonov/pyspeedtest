@@ -14,6 +14,7 @@ import ssl
 import string
 import sys
 import platform
+import traceback
 
 from math import sqrt
 from threading import currentThread, Thread
@@ -59,11 +60,14 @@ class SpeedTest(object):
     ALPHABET = string.digits + string.ascii_letters
 
     def __init__(self, host=None, http_debug=0, runs=2,
-                 connection_timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
+                 connection_timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                 http_proxy=None, https_proxy=None):
         self._host = host
         self.http_debug = http_debug
         self.runs = runs
         self.connection_timeout = connection_timeout
+        self.http_proxy = http_proxy
+        self.https_proxy = https_proxy
 
     @property
     def host(self):
@@ -80,12 +84,12 @@ class SpeedTest(object):
         url = url.split('://', 1)[-1]
         if secure:
             connection = HTTPSConnection(
-                url, timeout=self.connection_timeout,
+                self.https_proxy or url, timeout=self.connection_timeout,
                 context=ssl._create_unverified_context()
             )
         else:
             connection = HTTPConnection(
-                url, timeout=self.connection_timeout
+                self.http_proxy or url, timeout=self.connection_timeout
             )
         connection.set_debuglevel(self.http_debug)
         connection.connect()
@@ -100,7 +104,8 @@ class SpeedTest(object):
             response = connection.getresponse()
             self_thread.downloaded = len(response.read())
         except Exception as err:
-            self_thread.err = err.__class__, str(err)
+            logging.exception(err)
+            self_thread.err = err.__class__, traceback.format_exc()
 
     def download(self):
         total_downloaded = 0
@@ -148,7 +153,8 @@ class SpeedTest(object):
             reply = response.read().decode('utf-8')
             self_thread.uploaded = int(reply.split('=')[1])
         except Exception as err:
-            self_thread.err = err.__class__, str(err)
+            logging.exception(err)
+            self_thread.err = err.__class__, traceback.format_exc()
 
     def upload(self):
         connections = [
